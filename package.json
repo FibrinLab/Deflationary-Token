@@ -1,0 +1,46 @@
+{
+  "name": "erc20-token",
+  "version": "0.1.0",
+  "description": "ERC20 Token",
+  "main": "truffle-config.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "compile": "truffle compile",
+    "migrate:local": "truffle migrate",
+    "migrate:ropsten": "truffle migrate --network=ropsten --reset",
+    "migrate:mainnet": "truffle migrate --network=mainnet --reset",
+    "flatten-token": "truffle-flattener contracts/Token.sol >> Token.sol",
+    "flatten-presale": "truffle-flattener contracts/PreSale.sol >> PreSale.sol"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/satyamakgec/erc20-token.git"
+  },
+  "keywords": [
+    "ERC20",
+    "smart",
+    "contract",
+    "Ethereum",
+    "Mintable",
+    "Burnable"
+  ],
+  "author": "Satyam Agrawal",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/satyamakgec/erc20-token/issues"
+  },
+  "homepage": "https://github.com/satyamakgec/erc20-token#readme",
+  "dependencies": {
+    "dotenv": "^8.2.0",
+    "openzeppelin-solidity": "^3.2.0",
+    "truffle-hdwallet-provider": "^1.0.17",
+    "web3-provider-engine": "^16.0.1"
+  },
+  "devDependencies": {
+    "truffle": "^5.1.50",
+    "truffle-flattener": "^1.5.0"
+  }
+}
