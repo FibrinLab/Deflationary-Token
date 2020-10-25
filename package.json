@@ -17,7 +17,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/satyamakgec/erc20-token.git"
+    "url": "git+https://github.com/satyamakgec/deflationary-token.git"
   },
   "keywords": [
     "ERC20",
@@ -30,9 +30,9 @@
   "author": "Satyam Agrawal",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/satyamakgec/erc20-token/issues"
+    "url": "https://github.com/satyamakgec/deflationary-token/issues"
   },
-  "homepage": "https://github.com/satyamakgec/erc20-token#readme",
+  "homepage": "https://github.com/satyamakgec/deflationary-token#readme",
   "dependencies": {
     "dotenv": "^8.2.0",
     "openzeppelin-solidity": "^3.2.0",
