@@ -14,40 +14,25 @@ contract SPAMToken is Context, IERC20, Ownable {
 
     mapping (address => mapping (address => uint256)) private _allowances;
 
-     // Structures to maintain checkpoints of balances for governance / dividends
-    struct Checkpoint {
-        uint256 checkpointId;
-        uint256 value;
-    }
-
-    // Value of current checkpoint
-    uint256 public currentCheckpointId;
-
-    // Times at which each checkpoint was created
-    uint256[] checkpointTimes;
-
-    // Mapping of checkpoints that relate to total supply
-    mapping (uint256 => uint256) checkpointTotalSupply;
-
-    // Map each investor to a series of checkpoints
-    mapping(address => Checkpoint[]) checkpointBalances;
-
-    // Unbounded array of investors
-    address[] private investors;
-
-    // Number of investors with non-zero balance
-    uint256 public holderCount;
-
     uint256 public deflationRate = 100; // 1 % of the transfer amount.
+
+    uint256 public newAccountDeflationRate = 3; // 3 % of the current balance of the token holder.
+
+    uint256 public constant NEW_ACCOUNT_DEFLATION_TIME = 5 days; // 5 days is the relaxation time for the non-zero token holder.
+
+    uint256 public newAccountDeflationStartTime;
+
+    uint256 public nextNewAccountDeflationTimePeriod;
+
+    mapping(address => bool) public accountToBeDeducted;
+
+    mapping(address => uint256) public deductedAfterTime;
 
     uint256 private _totalSupply;
 
     string private _name = "SPAM Token";
     string private _symbol = "SPAM";
     uint8 private _decimals = 18;
-
-    // Emit when new checkpoint created
-    event CheckpointCreated(uint256 indexed _checkpointId, uint256 _investorLength);
 
     constructor (address account) public {
         _mint(account, 100000);
@@ -97,26 +82,6 @@ contract SPAMToken is Context, IERC20, Ownable {
      */
     function balanceOf(address account) public virtual override view returns (uint256) {
         return _balances[account];
-    }
-
-    /**
-     * @notice Queries balances as of a defined checkpoint
-     * @param _investor Investor to query balance for
-     * @param _checkpointId Checkpoint ID to query as of
-     */
-    function balanceOfAt(address _investor, uint256 _checkpointId) public view returns(uint256) {
-        require(_checkpointId <= currentCheckpointId);
-        return _getValueAt(checkpointBalances[_investor], _checkpointId, balanceOf(_investor));
-    }
-
-    /**
-     * @notice Queries totalSupply as of a defined checkpoint
-     * @param _checkpointId Checkpoint ID to query
-     * @return uint256
-     */
-    function totalSupplyAt(uint256 _checkpointId) external view returns(uint256) {
-        require(_checkpointId <= currentCheckpointId);
-        return checkpointTotalSupply[_checkpointId];
     }
 
     /**
@@ -211,7 +176,6 @@ contract SPAMToken is Context, IERC20, Ownable {
      * See {ERC20-_burn}.
      */
     function burn(uint256 amount) public {
-        _beforeTokenTransfer(_msgSender(), address(0), amount);
         _burn(_msgSender(), amount);
     }
     
@@ -234,20 +198,6 @@ contract SPAMToken is Context, IERC20, Ownable {
     }
 
     /**
-     * @notice Creates a checkpoint that can be used to query historical balances / totalSuppy
-     * @return uint256
-     */
-    function createCheckpoint() onlyOwner external returns(uint256) {
-        // currentCheckpointId can only be incremented by 1 and hence it can not be overflowed
-        currentCheckpointId = currentCheckpointId + 1;
-        /*solium-disable-next-line security/no-block-members*/
-        checkpointTimes.push(now);
-        checkpointTotalSupply[currentCheckpointId] = totalSupply();
-        emit CheckpointCreated(currentCheckpointId, investors.length);
-        return currentCheckpointId;
-    }
-
-    /**
      * @dev Moves tokens `amount` from `sender` to `recipient`.
      *
      * This is internal function is equivalent to {transfer}, and can be used to
@@ -265,16 +215,63 @@ contract SPAMToken is Context, IERC20, Ownable {
         require(sender != address(0), "ERC20: transfer from the zero address");
         require(recipient != address(0), "ERC20: transfer to the zero address");
 
-        // Burn 1 % of transfer amount.
-        uint256 _burnAmount = amount / deflationRate;
-        uint256 _remainingAmount = amount - _burnAmount;
-        _burn(sender, _burnAmount);
-
-        _beforeTokenTransfer(sender, recipient, _remainingAmount);
+        _applyNewAccountDeflation(sender, recipient);
+        uint256 _remainingAmount = _applyRegularTransferDeflation(sender, amount);
 
         _balances[sender] = _balances[sender].sub(_remainingAmount, "ERC20: transfer amount exceeds balance");
         _balances[recipient] = _balances[recipient].add(_remainingAmount);
         emit Transfer(sender, recipient, _remainingAmount);
+    }
+
+    /**
+     * @dev Internal function - It will burn the 3 % of the current holdings of the sender
+     * only if the sender is moves from zero balance to non-zero balance in last deflation time period.
+     */
+    function _applyNewAccountDeflation(address sender, address receiver) internal {
+        if (accountToBeDeducted[sender] && now >= deductedAfterTime[sender]) {
+            // Burn 3 % of transfer amount.
+            uint256 _burnAmount = _balances[sender].mul(newAccountDeflationRate) / 100;
+            _unsafeBurn(sender, _burnAmount);
+            _removeNewAccountStatus(sender);
+        }
+        if (_balances[receiver] == 0) {
+            if (now > nextNewAccountDeflationTimePeriod) {
+                // calculate the next deflation timestamp.
+                uint256 passedPeriods = (now - newAccountDeflationStartTime).div(NEW_ACCOUNT_DEFLATION_TIME);
+                // Next period will always be one more than the passed periods length.
+                nextNewAccountDeflationTimePeriod = newAccountDeflationStartTime.add((passedPeriods + 1) * NEW_ACCOUNT_DEFLATION_TIME);
+            }
+            // Provide new account status only if the current balance of receiver is zero.
+            _provideNewAccountStatus(receiver, nextNewAccountDeflationTimePeriod);
+        }
+    }
+
+    /**
+     * @dev Purge the new account status for the given target account.
+     */
+    function _removeNewAccountStatus(address target) internal {
+        delete accountToBeDeducted[target];
+        delete deductedAfterTime[target];
+    }
+
+    /**
+     * @dev Provide the new account status to the given target account.
+     */
+    function _provideNewAccountStatus(address target, uint256 time) internal {
+        if (!accountToBeDeducted[target]) {
+            accountToBeDeducted[target] = true;
+            deductedAfterTime[target] = time;
+        }
+    }
+
+    /**
+     * @dev Burn 1 % of the sending amount.
+     */
+    function _applyRegularTransferDeflation(address sender, uint256 amount) internal returns (uint256 _remainingAmount){
+        // Burn 1 % of transfer amount.
+        uint256 _burnAmount = amount / deflationRate;
+        _remainingAmount = amount - _burnAmount;
+        _unsafeBurn(sender, _burnAmount);
     }
 
     /**
@@ -290,131 +287,16 @@ contract SPAMToken is Context, IERC20, Ownable {
      */
     function _burn(address account, uint256 amount) internal {
         require(account != address(0), "ERC20: burn from the zero address");
+        _unsafeBurn(account, amount);
+    }
 
+    /**
+     * @dev Unsafe version of the burn method.
+     */
+    function _unsafeBurn(address account, uint256 amount) internal  {
         _balances[account] = _balances[account].sub(amount, "ERC20: burn amount exceeds balance");
         _totalSupply = _totalSupply.sub(amount);
         emit Transfer(account, address(0), amount);
-    }
-
-    /**
-     * @notice Internal - adjusts token holder balance at checkpoint before a token transfer
-     * @param _investor address of the token holder affected
-     */
-    function _adjustBalanceCheckpoints(address _investor) internal {
-        _adjustCheckpoints(checkpointBalances[_investor], balanceOf(_investor), currentCheckpointId);
-    }
-
-    /**
-     * @dev Hook that is called before any transfer of tokens. This includes
-     * minting and burning.
-     *
-     * Calling conditions:
-     *
-     * - when `from` and `to` are both non-zero, `amount` of ``from``'s tokens
-     * will be to transferred to `to`.
-     * - when `from` is zero, `amount` tokens will be minted for `to`.
-     * - when `to` is zero, `amount` of ``from``'s tokens will be burned.
-     * - `from` and `to` are never both zero.
-     *
-     * To learn more about hooks, head to xref:ROOT:extending-contracts.adoc#using-hooks[Using Hooks].
-     */
-    function _beforeTokenTransfer(address from, address to, uint256 amount) internal {
-        _adjustInvestorCount(from, to, amount, _balances[to], _balances[from]);
-        _adjustBalanceCheckpoints(from);
-        _adjustBalanceCheckpoints(to);
-    }
-
-    /**
-     * @notice Queries a value at a defined checkpoint
-     * @param _checkpoints is array of Checkpoint objects
-     * @param _checkpointId is the Checkpoint ID to query
-     * @param _currentValue is the Current value of checkpoint
-     * @return uint256
-     */
-    function _getValueAt(Checkpoint[] storage _checkpoints, uint256 _checkpointId, uint256 _currentValue) internal view returns(uint256) {
-        //Checkpoint id 0 is when the token is first created - everyone has a zero balance
-        if (_checkpointId == 0) {
-            return 0;
-        }
-        if (_checkpoints.length == 0) {
-            return _currentValue;
-        }
-        if (_checkpoints[0].checkpointId >= _checkpointId) {
-            return _checkpoints[0].value;
-        }
-        if (_checkpoints[_checkpoints.length - 1].checkpointId < _checkpointId) {
-            return _currentValue;
-        }
-        if (_checkpoints[_checkpoints.length - 1].checkpointId == _checkpointId) {
-            return _checkpoints[_checkpoints.length - 1].value;
-        }
-        uint256 min = 0;
-        uint256 max = _checkpoints.length - 1;
-        while (max > min) {
-            uint256 mid = (max + min) / 2;
-            if (_checkpoints[mid].checkpointId == _checkpointId) {
-                max = mid;
-                break;
-            }
-            if (_checkpoints[mid].checkpointId < _checkpointId) {
-                min = mid + 1;
-            } else {
-                max = mid;
-            }
-        }
-        return _checkpoints[max].value;
-    }
-
-    /**
-     * @notice Stores the changes to the checkpoint objects
-     * @param _checkpoints is the affected checkpoint object array
-     * @param _newValue is the new value that needs to be stored
-     */
-    function _adjustCheckpoints(Checkpoint[] storage _checkpoints, uint256 _newValue, uint256 _currentCheckpointId) internal {
-        //No checkpoints set yet
-        if (_currentCheckpointId == 0) {
-            return;
-        }
-        //No new checkpoints since last update
-        if ((_checkpoints.length > 0) && (_checkpoints[_checkpoints.length - 1].checkpointId == _currentCheckpointId)) {
-            return;
-        }
-        //New checkpoint, so record balance
-        _checkpoints.push(Checkpoint({checkpointId: _currentCheckpointId, value: _newValue}));
-    }
-
-    /**
-    * @notice Keeps track of the number of non-zero token holders
-    * @param _from Sender of transfer
-    * @param _to Receiver of transfer
-    * @param _value Value of transfer
-    * @param _balanceTo Balance of the _to address
-    * @param _balanceFrom Balance of the _from address
-    */
-    function _adjustInvestorCount(
-        address _from,
-        address _to,
-        uint256 _value,
-        uint256 _balanceTo,
-        uint256 _balanceFrom
-    )
-        internal
-        returns(uint256)
-    {
-        if ((_value == 0) || (_from == _to)) {
-            return holderCount;
-        }
-        // Check whether receiver is a new token holder
-        if ((_balanceTo == 0) && (_to != address(0))) {
-            holderCount = holderCount.add(1);
-            investors.push(_to);
-        }
-        // Check whether sender is moving all of their tokens
-        if (_value == _balanceFrom) {
-            holderCount = holderCount.sub(1);
-        }
-
-        return holderCount;
     }
 
     /** @dev Creates `amount` tokens and assigns them to `account`, increasing
@@ -428,8 +310,6 @@ contract SPAMToken is Context, IERC20, Ownable {
      */
     function _mint(address account, uint256 amount) internal virtual {
         require(account != address(0), "ERC20: mint to the zero address");
-
-        _beforeTokenTransfer(address(0), account, amount);
 
         _totalSupply = _totalSupply.add(amount);
         _balances[account] = _balances[account].add(amount);
