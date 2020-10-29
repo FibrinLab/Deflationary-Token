@@ -20,13 +20,20 @@ contract SPAMToken is Context, IERC20, Ownable {
 
     uint256 public constant NEW_ACCOUNT_DEFLATION_TIME = 5 days; // 5 days is the relaxation time for the non-zero token holder.
 
+    // Start time at which 5 days cycle starts.
     uint256 public newAccountDeflationStartTime;
 
+    // Timestamp at which new account balance burned with 3 % of the total balance.
     uint256 public nextNewAccountDeflationTimePeriod;
 
+    // Mapping to keep track which account is new account (moved recently from the zero balance to non-zero balance).
     mapping(address => bool) public accountToBeDeducted;
 
+    // Mapping to keep track of timestamp at which 3 % deflation applied for given investor.
     mapping(address => uint256) public deductedAfterTime;
+
+    // Contains the list of token holders who are immune of any deflation.
+    mapping(address => bool) public skippedAccountFromDeflation;
 
     uint256 private _totalSupply;
 
@@ -34,8 +41,17 @@ contract SPAMToken is Context, IERC20, Ownable {
     string private _symbol = "SPAM";
     uint8 private _decimals = 18;
 
+    event AccountFromDeflationSkipped(address account);
+
+    event AccountRemovedFromSkipDeflationList(address account);
+
     constructor (address account) public {
-        _mint(account, 100000);
+        require(account != address(0), "ERC20: Zero address not allowed");
+        skippedAccountFromDeflation[account] = true;
+        uint256 _amountToMint = 100000 * 10 ** 18;
+        newAccountDeflationStartTime = now;
+        nextNewAccountDeflationTimePeriod = now + NEW_ACCOUNT_DEFLATION_TIME;
+        _mint(account, _amountToMint);
     }
 
     /**
@@ -198,6 +214,26 @@ contract SPAMToken is Context, IERC20, Ownable {
     }
 
     /**
+     * @dev Used to add an account in the allowed list that will skip the deflation for them.
+     * @param account Address for whom deflation is skipped.
+     */
+    function skipAccountFromDeflation(address account) external onlyOwner {
+        require(account != address(0), "ERC20: Zero address not allowed");
+        skippedAccountFromDeflation[account] = true;
+        emit AccountFromDeflationSkipped(account);
+    }
+
+    /**
+     * @dev Used to remove an account from the allowed list that will skip the deflation for them.
+     * @param account Address for whom deflation is skipped.
+     */
+    function removeAccountFromSkipDeflationList(address account) external onlyOwner {
+        require(account != address(0), "ERC20: Zero address not allowed");
+        skippedAccountFromDeflation[account] = false;
+        emit AccountRemovedFromSkipDeflationList(account);
+    }
+
+    /**
      * @dev Moves tokens `amount` from `sender` to `recipient`.
      *
      * This is internal function is equivalent to {transfer}, and can be used to
@@ -228,13 +264,13 @@ contract SPAMToken is Context, IERC20, Ownable {
      * only if the sender is moves from zero balance to non-zero balance in last deflation time period.
      */
     function _applyNewAccountDeflation(address sender, address receiver) internal {
-        if (accountToBeDeducted[sender] && now >= deductedAfterTime[sender]) {
+        if (!skippedAccountFromDeflation[sender] && (accountToBeDeducted[sender] && now >= deductedAfterTime[sender])) {
             // Burn 3 % of transfer amount.
             uint256 _burnAmount = _balances[sender].mul(newAccountDeflationRate) / 100;
             _unsafeBurn(sender, _burnAmount);
             _removeNewAccountStatus(sender);
         }
-        if (_balances[receiver] == 0) {
+        if (_balances[receiver] == 0 && !skippedAccountFromDeflation[receiver]) {
             if (now > nextNewAccountDeflationTimePeriod) {
                 // calculate the next deflation timestamp.
                 uint256 passedPeriods = (now - newAccountDeflationStartTime).div(NEW_ACCOUNT_DEFLATION_TIME);
@@ -268,10 +304,15 @@ contract SPAMToken is Context, IERC20, Ownable {
      * @dev Burn 1 % of the sending amount.
      */
     function _applyRegularTransferDeflation(address sender, uint256 amount) internal returns (uint256 _remainingAmount){
-        // Burn 1 % of transfer amount.
-        uint256 _burnAmount = amount / deflationRate;
-        _remainingAmount = amount - _burnAmount;
-        _unsafeBurn(sender, _burnAmount);
+        // Skipping `sender` to burn token it is exists in the skipping list.
+        if (!skippedAccountFromDeflation[sender]) {
+            // Burn 1 % of transfer amount.
+            uint256 _burnAmount = amount / deflationRate;
+            _remainingAmount = amount - _burnAmount;
+            _unsafeBurn(sender, _burnAmount);
+        } else {
+            _remainingAmount = amount;
+        }
     }
 
     /**
