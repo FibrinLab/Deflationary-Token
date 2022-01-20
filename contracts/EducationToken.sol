@@ -6,7 +6,7 @@ import "openzeppelin-solidity/contracts/math/SafeMath.sol";
 import "openzeppelin-solidity/contracts/utils/Address.sol";
 import "openzeppelin-solidity/contracts/access/Ownable.sol";
 
-contract SPAMToken is Context, IERC20, Ownable {
+contract EducationToken is Context, IERC20, Ownable {
     using SafeMath for uint256;
     using Address for address;
 
@@ -37,8 +37,8 @@ contract SPAMToken is Context, IERC20, Ownable {
 
     uint256 private _totalSupply;
 
-    string private _name = "SPAM Token";
-    string private _symbol = "SPAM";
+    string private _name = "Education Token";
+    string private _symbol = "TFE";
     uint8 private _decimals = 18;
 
     event AccountFromDeflationSkipped(address account);
