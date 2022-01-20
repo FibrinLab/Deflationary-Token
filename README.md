@@ -40,7 +40,7 @@ To test
 npm run ganache-cli && npm run test
 ```
 
-To deploy using the remix IDE run `npm run flatten`, It will create a new file `SPAMToken.sol` in the current directory which can be used for the deployment
+To deploy using the remix IDE run `npm run flatten`, It will create a new file `EducationToken.sol` in the current directory which can be used for the deployment
 using remix.
 
 
